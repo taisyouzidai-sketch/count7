@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>金種計算</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f4f6f9;
+            margin: 0;
+            padding: 4px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 450px;
+            background: #fff;
+            padding: 6px 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+            box-sizing: border-box;
+        }
+
+        #memo-area {
+            background: #fdfefe;
+            border: 1px solid #bdc3c7;
+            border-radius: 6px;
+            padding: 6px 8px;
+            margin-bottom: 8px;
+        }
+
+        .memo-title {
+            font-size: 0.9rem;
+            font-weight: bold;
+            color: #7f8c8d;
+            margin-bottom: 6px;
+        }
+
+        .list-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0px;
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            padding: 0px 0;
+            border-bottom: 1px dotted #ddd;
+        }
+
+        .label {
+            font-weight: bold;
+            font-size: 1.4rem;
+            width: 110px;
+            color: #333;
+            text-align: left;
+            flex-shrink: 0;
+        }
+
+        /* 3回に分けたコードと同じく、通常の1行入力用のスタイル */
+        .input-qty {
+            width: 80px;
+            font-size: 1.4rem;
+            font-weight: bold;
+            padding: 2px 6px;
+            text-align: right;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin: 2px 0;
+            height: 34px;
+            line-height: 1.2;
+        }
+
+        .input-qty:focus {
+            border-color: #3498db;
+            outline: none;
+            background-color: #f7fbfe;
+        }
+
+        .subtotal {
+            flex: 1;
+            text-align: right;
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #2c3e50;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .total-display {
+            background: #2c3e50;
+            color: #fff;
+            text-align: center;
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 1.8rem;
+            font-weight: bold;
+            margin-top: 6px;
+        }
+    </style>
+    <script>
+        // --- 1. フリー計算メモ（小数点対応版） ---
+        function processMemo(el) {
+            el.style.height = 'auto';
+            el.style.height = el.scrollHeight + 'px';
+            const row = el.parentElement;
+            const resDisp = row.querySelector('.memo-res');
+            let s = el.value
+                .replace(/×/g, '*')
+                .replace(/÷/g, '/')
+                .replace(/－|ー/g, '-')
+                .replace(/．|，/g, '.')
+                .replace(/[０-９]/g, m => String.fromCharCode(m.charCodeAt(0) - 0xFEE0));
+
+            let clean = s.replace(/[^0-9+\-*/().\s]/g, '');
+            try {
+                if (clean.trim() === "") { resDisp.textContent = ""; }
+                else {
+                    let res = Function(`'use strict'; return (${clean})`)() || 0;
+                    resDisp.textContent = "= " + Number(res).toLocaleString(undefined, { maximumFractionDigits: 10 });
+                }
+            } catch (e) { resDisp.textContent = ""; }
+        }
+
+        function checkKey(e, el) {
+            if (e.isComposing) return;
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const newBlock = document.createElement('div');
+                newBlock.className = 'calc-memo-block';
+                newBlock.style = "margin-bottom: 10px; border-bottom: 1px dashed #ccc; padding-bottom: 5px;";
+                newBlock.innerHTML = `
+                <textarea class="memo-expr" oninput="processMemo(this)" onkeydown="checkKey(event, this)"
+                    style="width: 100%; font-size: 20px; font-weight: 900; border: none; background: transparent; outline: none; resize: none; overflow: hidden; line-height: 1.2; font-family: sans-serif; height: 30px;"></textarea>
+                <div class="memo-res" style="text-align: right; font-size: 22px; font-weight: 900; color: #c0392b; font-family: monospace; min-height: 26px;"></div>
+            `;
+                el.parentElement.after(newBlock);
+                newBlock.querySelector('textarea').focus();
+            } else if (e.key === 'Backspace' && el.value === '') {
+                const prevBlock = el.parentElement.previousElementSibling;
+                if (prevBlock && prevBlock.classList.contains('calc-memo-block')) {
+                    e.preventDefault();
+                    const prevInput = prevBlock.querySelector('textarea');
+                    prevInput.focus();
+                    prevInput.selectionStart = prevInput.selectionEnd = prevInput.value.length;
+                    el.parentElement.remove();
+                }
+            }
+        }
+
+        // --- 2. 金種計算システム（バグ再現・数字画面固定版） ---
+        document.addEventListener('DOMContentLoaded', () => {
+            const rows = document.querySelectorAll('.list-container .row');
+            const inputs = Array.from(document.querySelectorAll('.input-qty'));
+            const grandTotalDisplay = document.getElementById('grand-total');
+
+            function convertToHalfWidth(str) {
+                let halfWidth = str.replace(/[０-９]/g, (s) => {
+                    return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
+                });
+                return halfWidth.replace(/[^0-9]/g, '');
+            }
+
+            function calculate() {
+                let grandTotal = 0;
+                rows.forEach(row => {
+                    const input = row.querySelector('.input-qty');
+                    const subtotalDisplay = row.querySelector('.subtotal');
+
+                    let cleanValue = convertToHalfWidth(input.value);
+                    if (input.value !== cleanValue) {
+                        input.value = cleanValue;
+                    }
+
+                    const value = parseInt(input.getAttribute('data-value'), 10);
+                    const qty = parseInt(cleanValue, 10) || 0;
+
+                    const subtotal = value * qty;
+                    subtotalDisplay.textContent = subtotal.toLocaleString();
+                    grandTotal += subtotal;
+                });
+                grandTotalDisplay.textContent = grandTotal.toLocaleString();
+            }
+
+            inputs.forEach((input, index) => {
+                input.addEventListener('input', calculate);
+
+                // 3回に分けたファイルと「全く同じタイミング」を再現する処理
+                input.addEventListener('focus', () => {
+                    // 1. まず一瞬だけ全選択を実行
+                    input.select();
+
+                    // 2. 直後にプログラム側から値を再上書きして「全選択を破壊」する
+                    // これによりカーソルが文字の後ろに固定され、Safariが数字キーボードを維持します
+                    setTimeout(() => {
+                        const currentVal = input.value;
+                        input.value = '';
+                        input.value = currentVal;
+                    }, 1);
+                });
+
+                input.addEventListener('keydown', (e) => {
+                    if (e.isComposing) return;
+
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const nextInput = inputs[index + 1];
+                        if (nextInput) {
+                            nextInput.focus();
+                        } else {
+                            inputs[0].focus(); // 最初に戻る
+                        }
+                    }
+                });
+            });
+        });
+    </script>
+</head>
+
+<body>
+
+    <div class="container">
+        <!-- フリー計算エリア -->
+        <div id="memo-area">
+            <div class="memo-title">フリー計算（Enterで追加 / BSで削除）</div>
+            <div class="calc-memo-block"
+                style="margin-bottom: 10px; border-bottom: 1px dashed #ccc; padding-bottom: 5px;">
+                <textarea class="memo-expr" oninput="processMemo(this)" onkeydown="checkKey(event, this)"
+                    style="width: 100%; font-size: 20px; font-weight: 900; border: none; background: transparent; outline: none; resize: none; overflow: hidden; line-height: 1.2; font-family: sans-serif; height: 30px;"
+                    placeholder="タップして計算"></textarea>
+                <div class="memo-res"
+                    style="text-align: right; font-size: 22px; font-weight: 900; color: #c0392b; font-family: monospace; min-height: 26px;">
+                </div>
+            </div>
+        </div>
+
+        <!-- 金種入力エリア（3回に分けたファイルと同じくtype="number"に統一） -->
+        <div class="list-container">
+            <div class="row"><span class="label">10,000</span><input type="number" class="input-qty" data-value="10000"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">5,000</span><input type="number" class="input-qty" data-value="5000"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">2,000</span><input type="number" class="input-qty" data-value="2000"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">1,000</span><input type="number" class="input-qty" data-value="1000"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">500</span><input type="number" class="input-qty" data-value="500"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">100</span><input type="number" class="input-qty" data-value="100"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">50</span><input type="number" class="input-qty" data-value="50"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">10</span><input type="number" class="input-qty" data-value="10"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">5</span><input type="number" class="input-qty" data-value="5"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+            <div class="row"><span class="label">1</span><input type="number" class="input-qty" data-value="1"
+                    placeholder="0" value="0"><span class="subtotal">0</span></div>
+        </div>
+
+        <div class="total-display">
+            計: <span id="grand-total">0</span> 円
+        </div>
+    </div>
+
+</body>
+
+</html>
